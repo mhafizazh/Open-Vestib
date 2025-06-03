@@ -2,7 +2,7 @@
 
 A real-time eye tracking tool built with PyQt5, OpenCV, and PyQtGraph. This app captures video from two cameras (left and right eyes), detects pupil positions, plots their movement over time, and records..
 
-![Preview](media\2025-06-0313-02-34-ezgif.com-video-to-gif-converter.gif) <!-- Replace with actual GIF path -->
+![Preview](media/2025-06-0313-02-34-ezgif.com-video-to-gif-converter.gif) 
 
 ---
 
