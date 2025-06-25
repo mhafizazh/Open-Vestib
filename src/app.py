@@ -37,13 +37,16 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         # Buttons
         self.start_button = QtWidgets.QPushButton("start")
         self.stop_button = QtWidgets.QPushButton("stop")
+        self.quit_button = QtWidgets.QPushButton("quit")
 
         self.start_button.clicked.connect(self.start_recording)
         self.stop_button.clicked.connect(self.stop_recording)
+        self.quit_button.clicked.connect(self.close)
 
         button_layout = QtWidgets.QHBoxLayout()
         button_layout.addWidget(self.start_button)
         button_layout.addWidget(self.stop_button)
+        button_layout.addWidget(self.quit_button) 
 
         self.layout.addLayout(button_layout, 2, 0, 1, 2)  # row 2, spanning 2 columns
 
@@ -124,12 +127,14 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         # Combine and display
         combined_frame = np.hstack((left_frame, right_frame))
 
-        # Initialize VideoWriter once
-        if self.video_writer is None:
-            height, width = combined_frame.shape[:2]
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            output_path = os.path.join("result_videos", f"recording_{int(time.time())}.mp4")
-            self.video_writer = cv2.VideoWriter(output_path, fourcc, 30, (width, height))
+        # # Initialize VideoWriter once
+        # if self.video_writer is None:
+        #     height, width = combined_frame.shape[:2]
+        #     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        #     output_path = os.path.join("result_videos", f"recording_{int(time.time())}.mp4")
+        #     self.video_writer = cv2.VideoWriter(output_path, fourcc, 30, (width, height))
+        #     if not self.video_writer.isOpened():
+        #         print("VideoWriter failed to open (update)")
 
         # ✅ Write frame to video
         if self.recording_enabled and self.video_writer:
@@ -153,14 +158,25 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
 
         event.accept()
     
+
+    
     def start_recording(self):
         self.recording_enabled = True
         if self.video_writer is None:
-            height, width = self.video_label.height(), self.video_label.width()
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            output_path = os.path.join("result_videos", f"recording_{int(time.time())}.mp4")
-            self.video_writer = cv2.VideoWriter(output_path, fourcc, 30, (width, height))
+            # Get frame size from the current combined frame
+            left_frame, right_frame = get_frames(self.left_cam, self.right_cam)
+            if left_frame is not None and right_frame is not None:
+                combined_frame = np.hstack((left_frame, right_frame))
+                height, width = combined_frame.shape[:2]
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                output_path = os.path.join("result_videos", f"recording_{int(time.time())}.mp4")
+                self.video_writer = cv2.VideoWriter(output_path, fourcc, 30, (width, height))
+                if not self.video_writer.isOpened():
+                    print("VideoWriter failed to open (start_recording)")
+            else:
+                print("Cannot start recording: no frames available")
         print("Recording started")
+    # ...existing code...
 
     def stop_recording(self):
         self.recording_enabled = False
@@ -170,4 +186,3 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         print("Recording stopped")
 
     
-
