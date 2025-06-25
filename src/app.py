@@ -23,6 +23,7 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         self.last_left_x = self.last_left_y = None
         self.last_right_x = self.last_right_y = None
         self.start_time = time.time()
+        self.recording_enabled = False
 
         # UI setup
         self.setWindowTitle("Eye Tracking System")
@@ -32,6 +33,19 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         self.layout = QtWidgets.QGridLayout(self.central_widget)
         self.video_label = QtWidgets.QLabel()
         self.layout.addWidget(self.video_label, 0, 0, 1, 2)
+
+        # Buttons
+        self.start_button = QtWidgets.QPushButton("start")
+        self.stop_button = QtWidgets.QPushButton("stop")
+
+        self.start_button.clicked.connect(self.start_recording)
+        self.stop_button.clicked.connect(self.stop_recording)
+
+        button_layout = QtWidgets.QHBoxLayout()
+        button_layout.addWidget(self.start_button)
+        button_layout.addWidget(self.stop_button)
+
+        self.layout.addLayout(button_layout, 2, 0, 1, 2)  # row 2, spanning 2 columns
 
 
         # Create output directory
@@ -118,8 +132,9 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
             self.video_writer = cv2.VideoWriter(output_path, fourcc, 30, (width, height))
 
         # ✅ Write frame to video
-        if self.video_writer:
+        if self.recording_enabled and self.video_writer:
             self.video_writer.write(combined_frame)
+
 
         # Convert to Qt image and display
         rgb_image = cv2.cvtColor(combined_frame, cv2.COLOR_BGR2RGB)
@@ -138,5 +153,21 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
 
         event.accept()
     
+    def start_recording(self):
+        self.recording_enabled = True
+        if self.video_writer is None:
+            height, width = self.video_label.height(), self.video_label.width()
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            output_path = os.path.join("result_videos", f"recording_{int(time.time())}.mp4")
+            self.video_writer = cv2.VideoWriter(output_path, fourcc, 30, (width, height))
+        print("Recording started")
+
+    def stop_recording(self):
+        self.recording_enabled = False
+        if self.video_writer:
+            self.video_writer.release()
+            self.video_writer = None
+        print("Recording stopped")
+
     
 
