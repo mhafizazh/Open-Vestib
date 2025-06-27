@@ -1,6 +1,7 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtWidgets import QFileDialog
 from camera_handler import init_cameras, get_frames
+from pygrabber.dshow_graph import FilterGraph
 from pupil_detection import detect_pupil
 from plotting import PlotManager
 import numpy as np
@@ -26,6 +27,8 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         self.start_time = time.time()
         self.recording_enabled = False
         self.recording_filename = None
+        # self.left_cam_selector.currentIndexChanged.connect(self.init_selected_cameras)
+        # self.right_cam_selector.currentIndexChanged.connect(self.init_selected_cameras)
 
         # UI setup
         self.setWindowTitle("Eye Tracking System")
@@ -36,6 +39,32 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         self.video_label = QtWidgets.QLabel()
         self.layout.addWidget(self.video_label, 0, 0, 1, 2)
 
+        # --- Add camera selection dropdowns here ---
+        self.available_cameras = []
+        self.camera_names = []
+        graph = FilterGraph()
+        device_list = graph.get_input_devices()
+        for i, name in enumerate(device_list):
+            self.available_cameras.append(i)
+            self.camera_names.append(name)
+        
+        self.left_cam_selector = QtWidgets.QComboBox()
+        self.right_cam_selector = QtWidgets.QComboBox()
+        for idx, name in zip(self.available_cameras, self.camera_names):
+            self.left_cam_selector.addItem(f"{name}", idx)
+            self.right_cam_selector.addItem(f"{name}", idx)
+
+        self.left_cam_selector.setCurrentIndex(0)
+        self.right_cam_selector.setCurrentIndex(1 if len(self.available_cameras) > 1 else 0)
+
+        self.layout.addWidget(QtWidgets.QLabel("Left Camera:"), 3, 0)
+        self.layout.addWidget(self.left_cam_selector, 3, 1)
+        self.layout.addWidget(QtWidgets.QLabel("Right Camera:"), 4, 0)
+        self.layout.addWidget(self.right_cam_selector, 4, 1)
+        self.left_cam_selector.currentIndexChanged.connect(self.init_selected_cameras)
+        self.right_cam_selector.currentIndexChanged.connect(self.init_selected_cameras)
+        # --- End camera selection dropdowns ---
+        self.init_selected_cameras()
         # Buttons
         self.start_button = QtWidgets.QPushButton("start")
         self.stop_button = QtWidgets.QPushButton("stop")
@@ -241,5 +270,31 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
             self.video_writer = None
         self.recording_filename = None
         print("Recording stopped")
+
+    def init_selected_cameras(self):
+        left_index = self.left_cam_selector.currentData()
+        right_index = self.right_cam_selector.currentData()
+    
+        if left_index == right_index:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Camera Selection Error",
+                "Left and Right cameras must be different!"
+            )
+            # Revert right selector to a different camera
+            if self.right_cam_selector.currentIndex() == 0 and self.right_cam_selector.count() > 1:
+                self.right_cam_selector.setCurrentIndex(1)
+            else:
+                self.right_cam_selector.setCurrentIndex(0)
+            return
+    
+        # Release current cameras if they exist
+        if hasattr(self, 'left_cam') and self.left_cam is not None:
+            self.left_cam.release()
+        if hasattr(self, 'right_cam') and self.right_cam is not None:
+            self.right_cam.release()
+    
+        self.left_cam = cv2.VideoCapture(left_index)
+        self.right_cam = cv2.VideoCapture(right_index)
 
     
