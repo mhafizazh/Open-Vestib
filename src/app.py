@@ -52,7 +52,7 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
 
 
         # Create output directory
-        os.makedirs("result_videos", exist_ok=True)
+        os.makedirs("../result_videos", exist_ok=True)
 
         # Initialize screen recording writer (you'll set this properly in update)
         self.video_writer = None
@@ -97,22 +97,28 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
             self.last_right_x = right_x
             self.last_right_y = right_y
 
+        
+        
         if self.last_left_x is not None and self.last_left_y is not None:
             self.time_data.append(current_time)
-            self.left_x_data.append(self.last_left_x)
-            self.left_y_data.append(self.last_left_y)
-
+            # Only append if values are numbers
+            if isinstance(self.last_left_x, (int, float)) and isinstance(self.last_left_y, (int, float)):
+                self.left_x_data.append(self.last_left_x)
+                self.left_y_data.append(self.last_left_y)
+        
             if self.last_right_x is not None and self.last_right_y is not None:
-                self.right_x_data.append(self.last_right_x)
-                self.right_y_data.append(self.last_right_y)
-
+                if isinstance(self.last_right_x, (int, float)) and isinstance(self.last_right_y, (int, float)):
+                    self.right_x_data.append(self.last_right_x)
+                    self.right_y_data.append(self.last_right_y)
+        
             self.plot_manager.update(
                 t=current_time,
-                lx=self.last_left_x,
-                ly=self.last_left_y,
-                rx=self.last_right_x,
-                ry=self.last_right_y
+                lx=self.last_left_x if isinstance(self.last_left_x, (int, float)) else 0,
+                ly=self.last_left_y if isinstance(self.last_left_y, (int, float)) else 0,
+                rx=self.last_right_x if isinstance(self.last_right_x, (int, float)) else 0,
+                ry=self.last_right_y if isinstance(self.last_right_y, (int, float)) else 0,
             )
+        
 
         # Draw detection markers
         if left_x is not None and left_y is not None:
@@ -126,19 +132,17 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
 
         # Combine and display
         combined_frame = np.hstack((left_frame, right_frame))
-
-        # # Initialize VideoWriter once
-        # if self.video_writer is None:
-        #     height, width = combined_frame.shape[:2]
-        #     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        #     output_path = os.path.join("result_videos", f"recording_{int(time.time())}.mp4")
-        #     self.video_writer = cv2.VideoWriter(output_path, fourcc, 30, (width, height))
-        #     if not self.video_writer.isOpened():
-        #         print("VideoWriter failed to open (update)")
+        plot_frame = self.get_plot_frame()  # <-- FIXED LINE
+        
+        if plot_frame.shape[1] != combined_frame.shape[1]:
+            plot_frame = cv2.resize(plot_frame, (combined_frame.shape[1], plot_frame.shape[0]))
+        
+        # Stack video and plot vertically
+        final_frame = np.vstack((combined_frame, plot_frame))
 
         # ✅ Write frame to video
         if self.recording_enabled and self.video_writer:
-            self.video_writer.write(combined_frame)
+            self.video_writer.write(final_frame)
 
 
         # Convert to Qt image and display
@@ -165,18 +169,40 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         if self.video_writer is None:
             # Get frame size from the current combined frame
             left_frame, right_frame = get_frames(self.left_cam, self.right_cam)
+            
             if left_frame is not None and right_frame is not None:
                 combined_frame = np.hstack((left_frame, right_frame))
-                height, width = combined_frame.shape[:2]
+                plot_frame = self.get_plot_frame()
+                if plot_frame.shape[1] != combined_frame.shape[1]:
+                    plot_frame = cv2.resize(plot_frame, (combined_frame.shape[1], plot_frame.shape[0]))
+                final_frame = np.vstack((combined_frame, plot_frame))
+                height, width = final_frame.shape[:2]
                 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                 output_path = os.path.join("result_videos", f"recording_{int(time.time())}.mp4")
                 self.video_writer = cv2.VideoWriter(output_path, fourcc, 30, (width, height))
                 if not self.video_writer.isOpened():
                     print("VideoWriter failed to open (start_recording)")
+            
             else:
                 print("Cannot start recording: no frames available")
         print("Recording started")
-    # ...existing code...
+    
+
+    def get_plot_frame(self):
+        """Capture the pyqtgraph plot as a NumPy BGR image, handling row padding."""
+        pixmap = self.plot_manager.plot_widget.grab()
+        qimage = pixmap.toImage().convertToFormat(QtGui.QImage.Format_RGB888)
+        width = qimage.width()
+        height = qimage.height()
+        bytes_per_line = qimage.bytesPerLine()
+        ptr = qimage.bits()
+        ptr.setsize(qimage.byteCount())
+        arr = np.array(ptr, dtype=np.uint8).reshape((height, bytes_per_line))
+        # Only take the actual image width (width * 3 for RGB)
+        arr = arr[:, :width * 3]
+        arr = arr.reshape((height, width, 3))
+        img = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+        return img
 
     def stop_recording(self):
         self.recording_enabled = False
