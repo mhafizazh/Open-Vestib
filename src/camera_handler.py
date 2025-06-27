@@ -1,8 +1,8 @@
 import cv2
 
-def init_cameras():
-    left_cam = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    right_cam = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+def init_cameras(left_idx=0, right_idx=1):
+    left_cam = cv2.VideoCapture(left_idx)
+    right_cam = cv2.VideoCapture(right_idx)
     return left_cam, right_cam
 
 def get_frames(left_cam, right_cam):

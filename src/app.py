@@ -133,6 +133,19 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
 
 
         # Combine and display
+        # Ensure left_frame and right_frame have the same height before stacking
+        lh, lw = left_frame.shape[:2]
+        rh, rw = right_frame.shape[:2]
+        
+        if lh != rh:
+            # Resize right_frame to match left_frame's height
+            new_rw = int(rw * lh / rh)
+            right_frame = cv2.resize(right_frame, (new_rw, lh))
+            # Optionally, resize left_frame to match right_frame's height instead:
+            # new_lw = int(lw * rh / lh)
+            # left_frame = cv2.resize(left_frame, (new_lw, rh))
+        
+        # Now you can safely stack
         combined_frame = np.hstack((left_frame, right_frame))
         plot_frame = self.get_plot_frame()  # <-- FIXED LINE
         
