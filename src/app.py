@@ -1,4 +1,5 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
+from PyQt5.QtWidgets import QFileDialog
 from camera_handler import init_cameras, get_frames
 from pupil_detection import detect_pupil
 from plotting import PlotManager
@@ -24,6 +25,7 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         self.last_right_x = self.last_right_y = None
         self.start_time = time.time()
         self.recording_enabled = False
+        self.recording_filename = None
 
         # UI setup
         self.setWindowTitle("Eye Tracking System")
@@ -140,6 +142,24 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         # Stack video and plot vertically
         final_frame = np.vstack((combined_frame, plot_frame))
 
+        if self.recording_enabled and self.video_writer is None and self.recording_filename:
+            height, width = final_frame.shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            self.video_writer = cv2.VideoWriter(self.recording_filename, fourcc, 30, (width, height))
+            if not self.video_writer.isOpened():
+                print("Trying XVID codec...")
+                fourcc = cv2.VideoWriter_fourcc(*'XVID')
+                self.video_writer = cv2.VideoWriter(self.recording_filename, fourcc, 30, (width, height))
+            if not self.video_writer.isOpened():
+                print("Trying MJPG codec...")
+                fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+                self.video_writer = cv2.VideoWriter(self.recording_filename, fourcc, 30, (width, height))
+            if not self.video_writer.isOpened():
+                print("VideoWriter failed to open")
+                self.video_writer = None
+                self.recording_enabled = False
+                return
+
         # ✅ Write frame to video
         if self.recording_enabled and self.video_writer:
             self.video_writer.write(final_frame)
@@ -165,27 +185,24 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
 
     
     def start_recording(self):
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Recording",
+            "",
+            "MP4 Files (*.mp4);;All Files (*)",
+            options=options
+        )
+        if not file_path:
+            print("Recording canceled by user.")
+            return
+        # Ensure .mp4 extension
+        if not file_path.lower().endswith('.mp4'):
+            file_path += '.mp4'
         self.recording_enabled = True
-        if self.video_writer is None:
-            # Get frame size from the current combined frame
-            left_frame, right_frame = get_frames(self.left_cam, self.right_cam)
-            
-            if left_frame is not None and right_frame is not None:
-                combined_frame = np.hstack((left_frame, right_frame))
-                plot_frame = self.get_plot_frame()
-                if plot_frame.shape[1] != combined_frame.shape[1]:
-                    plot_frame = cv2.resize(plot_frame, (combined_frame.shape[1], plot_frame.shape[0]))
-                final_frame = np.vstack((combined_frame, plot_frame))
-                height, width = final_frame.shape[:2]
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                output_path = os.path.join("result_videos", f"recording_{int(time.time())}.mp4")
-                self.video_writer = cv2.VideoWriter(output_path, fourcc, 30, (width, height))
-                if not self.video_writer.isOpened():
-                    print("VideoWriter failed to open (start_recording)")
-            
-            else:
-                print("Cannot start recording: no frames available")
-        print("Recording started")
+        self.recording_filename = file_path
+        print("Recording will start on next frame.")
     
 
     def get_plot_frame(self):
@@ -209,6 +226,7 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         if self.video_writer:
             self.video_writer.release()
             self.video_writer = None
+        self.recording_filename = None
         print("Recording stopped")
 
     
