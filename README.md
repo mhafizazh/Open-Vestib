@@ -7,12 +7,15 @@ A real-time eye tracking tool built with PyQt5, OpenCV, and PyQtGraph. This app 
 ---
 
 ## 🧠 Features
-
+- ▶️ Start and stop button for recording added
+- 📷 selecting the camera input
 - 🎥 Dual-camera live feed (left & right eye)
 - 🎯 Real-time pupil detection with crosshair overlay
 - 📈 Live plotting of X and Y positions over time
 - 🎬 Automatic screen recording (video + plots) saved as `.mp4`
 - 💾 Output saved in `result_videos/` folder
+- 📷 The safed vedio includes series graph
+- 📁 user can select the directory where the file    will be saved
 
 ---
 
