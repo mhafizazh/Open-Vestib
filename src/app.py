@@ -9,12 +9,15 @@ import time
 from collections import deque
 import cv2
 import os
+import pandas as pd
 
 
 
 class EyeTrackerApp(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
+        self.session_folder = None
+
 
         self.left_cam, self.right_cam = init_cameras()
         self.roi_width, self.roi_height = 150, 150
@@ -227,24 +230,24 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
 
     
     def start_recording(self):
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Recording",
-            "",
-            "MP4 Files (*.mp4);;All Files (*)",
-            options=options
+        text, ok = QtWidgets.QInputDialog.getText(
+            self, "Start Recording", "Enter session name:"
         )
-        if not file_path:
+        if not ok or not text:
             print("Recording canceled by user.")
             return
-        # Ensure .mp4 extension
-        if not file_path.lower().endswith('.mp4'):
-            file_path += '.mp4'
+
+        base_name = text.strip().replace(" ", "_")
+        self.session_folder = os.path.join("../result_videos", base_name)
+        os.makedirs(self.session_folder, exist_ok=True)
+
+        # Set file paths
+        self.recording_filename = os.path.join(self.session_folder, f"{base_name}.mp4")
+        self.csv_filename = os.path.join(self.session_folder, f"{base_name}.csv")
+
         self.recording_enabled = True
-        self.recording_filename = file_path
-        print("Recording will start on next frame.")
+        print(f"Recording started. Files will be saved to: {self.session_folder}")
+
     
 
     def get_plot_frame(self):
@@ -268,8 +271,39 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         if self.video_writer:
             self.video_writer.release()
             self.video_writer = None
+
+        # Save CSV
+        if self.session_folder:
+            import pandas as pd
+
+            # Get minimum length across all arrays
+            lengths = [
+                len(self.time_data),
+                len(self.left_x_data),
+                len(self.left_y_data),
+                len(self.right_x_data),
+                len(self.right_y_data),
+            ]
+            min_len = min(lengths)
+            if min_len < 10:
+                print("Not enough valid data to save.")
+                return
+
+            df = pd.DataFrame({
+                'time': list(self.time_data)[:min_len],
+                'left_x': list(self.left_x_data)[:min_len],
+                'left_y': list(self.left_y_data)[:min_len],
+                'right_x': list(self.right_x_data)[:min_len],
+                'right_y': list(self.right_y_data)[:min_len],
+            })
+            df.to_csv(self.csv_filename, index=False)
+            print(f"CSV data saved to: {self.csv_filename}")
+
         self.recording_filename = None
+        self.session_folder = None
         print("Recording stopped")
+
+
 
     def init_selected_cameras(self):
         left_index = self.left_cam_selector.currentData()
