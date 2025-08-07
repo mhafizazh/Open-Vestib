@@ -1,6 +1,7 @@
 import pyqtgraph as pg
 from collections import deque
 import numpy as np
+import pandas as pd
 
 class PlotManager:
     def __init__(self, layout, max_len=200):
@@ -37,3 +38,14 @@ class PlotManager:
         self.right_x_curve.setData(t_arr, self.right_x_data)
         self.left_y_curve.setData(t_arr, self.left_y_data)
         self.right_y_curve.setData(t_arr, self.right_y_data)
+
+    def save_to_csv(self, filename):
+        df = pd.DataFrame({
+            'time': list(self.time_data),
+            'left_x': list(self.left_x_data),
+            'left_y': list(self.left_y_data),
+            'right_x': list(self.right_x_data),
+            'right_y': list(self.right_y_data),
+        })
+        df.to_csv(filename, index=False)
+        print(f"[INFO] Data saved to {filename}")
