@@ -524,11 +524,45 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
 
         # Stop CSV recording and save data
         self.csv_handler.stop_recording()
+        
+        # Save final metadata with recording results
+        if self.session_info:
+            self.save_final_metadata()
 
         self.recording_filename = None
         self.session_folder = None
+        self.session_info = None
+        self.patient_folder = None
+        self.test_folder = None
         print("Recording stopped")
-
+        
+    def save_final_metadata(self):
+        """Save final metadata with recording results"""
+        if not self.session_info or not self.json_filename:
+            return
+            
+        # Load existing metadata
+        try:
+            with open(self.json_filename, 'r') as f:
+                metadata = json.load(f)
+        except:
+            metadata = {}
+            
+        # Add recording results
+        metadata['recording_results'] = {
+            'total_frames_recorded': self.csv_handler.get_current_frame_number(),
+            'recording_duration': self.csv_handler.time_data[-1] if self.csv_handler.time_data else 0,
+            'actual_fps': len(self.csv_handler.frame_data) / metadata.get('recording_results', {}).get('recording_duration', 1) if self.csv_handler.frame_data else 0,
+            'recording_completed': True,
+            'completion_time': datetime.now().isoformat()
+        }
+        
+        try:
+            with open(self.json_filename, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            print(f"[INFO] Final metadata updated: {self.json_filename}")
+        except Exception as e:
+            print(f"[ERROR] Failed to update final metadata: {e}")
 
 
     def init_selected_cameras(self):
