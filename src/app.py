@@ -1,27 +1,136 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
-from PyQt5.QtWidgets import QFileDialog
+from PyQt5.QtWidgets import QFileDialog, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QSpinBox, QPushButton, QFormLayout
 from camera_handler import init_cameras, get_frames
 from pygrabber.dshow_graph import FilterGraph
 from pupil_detection import detect_pupil
 from plotting import PlotManager
+from csv_handler import CSVDataHandler
 import numpy as np
 import time
 from collections import deque
 import cv2
 import os
 import pandas as pd
+import json
+from datetime import datetime
 
+
+
+class TestSessionDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Test Session Information")
+        self.setModal(True)
+        self.resize(400, 300)
+        
+        # Initialize data
+        self.patient_first_name = ""
+        self.patient_last_name = ""
+        self.test_type = ""
+        self.trial_number = 1
+        self.session_date = datetime.now().strftime("%Y%m%d")
+        self.session_time = datetime.now().strftime("%H:%M:%S")
+        
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        
+        # Form layout for inputs
+        form_layout = QFormLayout()
+        
+        # Patient first name
+        self.first_name_edit = QLineEdit()
+        self.first_name_edit.setPlaceholderText("Enter patient's first name")
+        form_layout.addRow("First Name:", self.first_name_edit)
+        
+        # Patient last name
+        self.last_name_edit = QLineEdit()
+        self.last_name_edit.setPlaceholderText("Enter patient's last name")
+        form_layout.addRow("Last Name:", self.last_name_edit)
+        
+        # Test type dropdown
+        self.test_type_combo = QComboBox()
+        test_types = [
+            "Left Dix Halpike",
+            "Right Dix Halpike", 
+            "Left BBQ Roll",
+            "Right BBQ Roll"
+        ]
+        self.test_type_combo.addItems(test_types)
+        form_layout.addRow("Test Type:", self.test_type_combo)
+        
+        # Trial number
+        self.trial_spinbox = QSpinBox()
+        self.trial_spinbox.setMinimum(1)
+        self.trial_spinbox.setMaximum(99)
+        self.trial_spinbox.setValue(1)
+        form_layout.addRow("Trial Number:", self.trial_spinbox)
+        
+        layout.addLayout(form_layout)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        self.ok_button = QPushButton("Start Recording")
+        self.cancel_button = QPushButton("Cancel")
+        
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+        
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        
+    def get_session_info(self):
+        """Get the session information as a dictionary"""
+        return {
+            'patient_first_name': self.first_name_edit.text().strip(),
+            'patient_last_name': self.last_name_edit.text().strip(),
+            'test_type': self.test_type_combo.currentText(),
+            'trial_number': self.trial_spinbox.value(),
+            'session_date': self.session_date,
+            'session_time': self.session_time,
+            'datetime': datetime.now().isoformat()
+        }
+        
+    def get_folder_name(self):
+        """Generate the folder name for the test session"""
+        test_type_clean = self.test_type_combo.currentText().replace(" ", "")
+        trial_num = self.trial_spinbox.value()
+        return f"{test_type_clean}_{trial_num}_{self.session_date}"
+        
+    def get_patient_folder_name(self):
+        """Generate the patient folder name"""
+        first_name = self.first_name_edit.text().strip()
+        last_name = self.last_name_edit.text().strip()
+        return f"{first_name}_{last_name}"
 
 
 class EyeTrackerApp(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.session_folder = None
+        
+        # Session information
+        self.session_info = None
+        self.patient_folder = None
+        self.test_folder = None
 
+        # Countdown variables
+        self.countdown_active = False
+        self.countdown_start_time = None
+        self.countdown_duration = 3  # 3 seconds
 
         self.left_cam, self.right_cam = init_cameras()
         self.roi_width, self.roi_height = 150, 150
         self.max_data_points = 200
+        
+        # Initialize CSV data handler
+        self.csv_handler = CSVDataHandler(max_data_points=self.max_data_points, target_fps=30)
+        
+        # Keep existing data structures for backward compatibility with plotting
         self.time_data = deque(maxlen=self.max_data_points)
         self.left_x_data, self.left_y_data = deque(), deque()
         self.right_x_data, self.right_y_data = deque(), deque()
@@ -57,8 +166,21 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
             self.left_cam_selector.addItem(f"{name}", idx)
             self.right_cam_selector.addItem(f"{name}", idx)
 
-        self.left_cam_selector.setCurrentIndex(0)
-        self.right_cam_selector.setCurrentIndex(1 if len(self.available_cameras) > 1 else 0)
+        # Auto-select cameras based on names
+        left_cam_index = self.find_camera_by_name("Left Eye")
+        right_cam_index = self.find_camera_by_name("Right Eye")
+        
+        # Set default selections
+        if left_cam_index is not None:
+            self.left_cam_selector.setCurrentIndex(left_cam_index)
+        else:
+            self.left_cam_selector.setCurrentIndex(0)
+            
+        if right_cam_index is not None:
+            self.right_cam_selector.setCurrentIndex(right_cam_index)
+        else:
+            # If no "Right Eye" camera found, select second camera if available
+            self.right_cam_selector.setCurrentIndex(1 if len(self.available_cameras) > 1 else 0)
 
         self.layout.addWidget(QtWidgets.QLabel("Left Camera:"), 3, 0)
         self.layout.addWidget(self.left_cam_selector, 3, 1)
@@ -75,7 +197,7 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
 
         self.start_button.clicked.connect(self.start_recording)
         self.stop_button.clicked.connect(self.stop_recording)
-        self.quit_button.clicked.connect(self.close)
+        self.quit_button.clicked.connect(QtWidgets.QApplication.quit)
 
         button_layout = QtWidgets.QHBoxLayout()
         button_layout.addWidget(self.start_button)
@@ -106,6 +228,40 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
             self.timer.stop()
             return
 
+        # Handle countdown
+        if self.countdown_active:
+            elapsed = time.time() - self.countdown_start_time
+            remaining = max(0, self.countdown_duration - elapsed)
+            
+            if remaining <= 0:
+                # Countdown finished, start actual recording
+                self.countdown_active = False
+                self.recording_enabled = True
+                print("Countdown finished! Recording started.")
+            else:
+                # Still in countdown, don't process data yet
+                countdown_text = f"Recording starts in: {int(remaining) + 1}"
+                
+                # Combine frames first
+                lh, lw = left_frame.shape[:2]
+                rh, rw = right_frame.shape[:2]
+                
+                if lh != rh:
+                    new_rw = int(rw * lh / rh)
+                    right_frame = cv2.resize(right_frame, (new_rw, lh))
+                
+                combined_frame = np.hstack((left_frame, right_frame))
+                
+                # Draw countdown on combined frame
+                self.draw_countdown_on_combined_frame(combined_frame, countdown_text)
+                
+                # Convert to Qt image and display
+                rgb_image = cv2.cvtColor(combined_frame, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb_image.shape
+                bytes_per_line = ch * w
+                qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+                self.video_label.setPixmap(QtGui.QPixmap.fromImage(qt_image))
+                return
 
         # Process left eye
         lh, lw = left_frame.shape[:2]
@@ -144,6 +300,19 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
                 if isinstance(self.last_right_x, (int, float)) and isinstance(self.last_right_y, (int, float)):
                     self.right_x_data.append(self.last_right_x)
                     self.right_y_data.append(self.last_right_y)
+            
+            # Add data to CSV handler if recording is enabled
+            if self.recording_enabled and not self.countdown_active:
+                frame_recorded = self.csv_handler.add_data_point(
+                    left_x=self.last_left_x if isinstance(self.last_left_x, (int, float)) else 0,
+                    left_y=self.last_left_y if isinstance(self.last_left_y, (int, float)) else 0,
+                    right_x=self.last_right_x if isinstance(self.last_right_x, (int, float)) else 0,
+                    right_y=self.last_right_y if isinstance(self.last_right_y, (int, float)) else 0
+                )
+                
+                # Optional: Print frame recording status for debugging
+                # if frame_recorded:
+                #     print(f"Frame {self.csv_handler.get_current_frame_number()} recorded at {time.time() - self.start_time:.3f}s")
         
             self.plot_manager.update(
                 t=current_time,
@@ -217,6 +386,23 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
         self.video_label.setPixmap(QtGui.QPixmap.fromImage(qt_image))
 
+    def draw_countdown_on_combined_frame(self, combined_frame, text):
+        """Draw countdown text on the combined frame in the top right corner."""
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.8 # Smaller font scale
+        thickness = 2
+        color = (0, 255, 0) # Green color
+        
+        # Get text size
+        (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+        
+        # Calculate position to place text in the top right corner
+        lh, lw = combined_frame.shape[:2]
+        text_x = lw - text_width - 10 # 10 pixels from the right edge
+        text_y = text_height + 10 # 10 pixels from the top edge
+        
+        # Draw text on the combined frame
+        cv2.putText(combined_frame, text, (text_x, text_y), font, font_scale, color, thickness)
 
     def closeEvent(self, event):
         self.left_cam.release()
@@ -224,31 +410,94 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
 
         if self.video_writer:
             self.video_writer.release()
+            
+        # Stop CSV recording if active
+        if self.csv_handler.get_recording_status():
+            self.csv_handler.stop_recording()
 
         event.accept()
     
 
     
     def start_recording(self):
-        text, ok = QtWidgets.QInputDialog.getText(
-            self, "Start Recording", "Enter session name:"
-        )
-        if not ok or not text:
+        # Show the test session dialog
+        dialog = TestSessionDialog(self)
+        if dialog.exec_() != QDialog.Accepted:
             print("Recording canceled by user.")
             return
 
-        base_name = text.strip().replace(" ", "_")
-        self.session_folder = os.path.join("../result_videos", base_name)
-        os.makedirs(self.session_folder, exist_ok=True)
-
+        # Get session information
+        self.session_info = dialog.get_session_info()
+        patient_folder_name = dialog.get_patient_folder_name()
+        test_folder_name = dialog.get_folder_name()
+        
+        # Validate required fields
+        if not self.session_info['patient_first_name'] or not self.session_info['patient_last_name']:
+            QtWidgets.QMessageBox.warning(self, "Missing Information", "Please enter both first and last name.")
+            return
+            
+        # Create folder structure
+        base_folder = "../result_videos"
+        self.patient_folder = os.path.join(base_folder, patient_folder_name)
+        self.test_folder = os.path.join(self.patient_folder, test_folder_name)
+        
+        # Create directories
+        os.makedirs(self.patient_folder, exist_ok=True)
+        os.makedirs(self.test_folder, exist_ok=True)
+        
         # Set file paths
-        self.recording_filename = os.path.join(self.session_folder, f"{base_name}.mp4")
-        self.csv_filename = os.path.join(self.session_folder, f"{base_name}.csv")
-
-        self.recording_enabled = True
-        print(f"Recording started. Files will be saved to: {self.session_folder}")
-
-    
+        self.session_folder = self.test_folder
+        self.recording_filename = os.path.join(self.test_folder, f"{test_folder_name}.mp4")
+        self.json_filename = os.path.join(self.test_folder, f"{test_folder_name}.json")
+        
+        # Start CSV recording
+        self.csv_handler.start_recording(test_folder_name, base_folder=self.test_folder)
+        
+        # Save JSON metadata
+        self.save_session_metadata()
+        
+        # Start countdown instead of recording immediately
+        self.countdown_active = True
+        self.countdown_start_time = time.time()
+        self.recording_enabled = False  # Will be set to True when countdown finishes
+        
+        print(f"Session started for {patient_folder_name}")
+        print(f"Test: {self.session_info['test_type']} - Trial {self.session_info['trial_number']}")
+        print(f"Folder: {self.test_folder}")
+        print(f"Countdown started. Recording will begin in {self.countdown_duration} seconds...")
+        
+    def save_session_metadata(self):
+        """Save session metadata to JSON file"""
+        if not self.session_info or not self.json_filename:
+            return
+            
+        metadata = {
+            'session_info': self.session_info,
+            'folder_structure': {
+                'patient_folder': self.patient_folder,
+                'test_folder': self.test_folder,
+                'video_file': self.recording_filename,
+                'csv_file': self.csv_handler.csv_filename,
+                'json_file': self.json_filename
+            },
+            'recording_settings': {
+                'target_fps': self.csv_handler.target_fps,
+                'roi_width': self.roi_width,
+                'roi_height': self.roi_height,
+                'max_data_points': self.max_data_points
+            },
+            'camera_info': {
+                'left_camera': self.camera_names[self.left_cam_selector.currentIndex()] if self.camera_names else "Unknown",
+                'right_camera': self.camera_names[self.right_cam_selector.currentIndex()] if self.camera_names else "Unknown"
+            }
+        }
+        
+        try:
+            with open(self.json_filename, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            print(f"[INFO] Session metadata saved to: {self.json_filename}")
+        except Exception as e:
+            print(f"[ERROR] Failed to save metadata: {e}")
 
     def get_plot_frame(self):
         """Capture the pyqtgraph plot as a NumPy BGR image, handling row padding."""
@@ -268,36 +517,13 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
 
     def stop_recording(self):
         self.recording_enabled = False
+        self.countdown_active = False  # Stop countdown if active
         if self.video_writer:
             self.video_writer.release()
             self.video_writer = None
 
-        # Save CSV
-        if self.session_folder:
-            import pandas as pd
-
-            # Get minimum length across all arrays
-            lengths = [
-                len(self.time_data),
-                len(self.left_x_data),
-                len(self.left_y_data),
-                len(self.right_x_data),
-                len(self.right_y_data),
-            ]
-            min_len = min(lengths)
-            if min_len < 10:
-                print("Not enough valid data to save.")
-                return
-
-            df = pd.DataFrame({
-                'time': list(self.time_data)[:min_len],
-                'left_x': list(self.left_x_data)[:min_len],
-                'left_y': list(self.left_y_data)[:min_len],
-                'right_x': list(self.right_x_data)[:min_len],
-                'right_y': list(self.right_y_data)[:min_len],
-            })
-            df.to_csv(self.csv_filename, index=False)
-            print(f"CSV data saved to: {self.csv_filename}")
+        # Stop CSV recording and save data
+        self.csv_handler.stop_recording()
 
         self.recording_filename = None
         self.session_folder = None
@@ -331,4 +557,20 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         self.left_cam = cv2.VideoCapture(left_index)
         self.right_cam = cv2.VideoCapture(right_index)
 
+    def find_camera_by_name(self, name_to_find):
+        """
+        Find the index of a camera by its name (case-insensitive partial match)
+        
+        Args:
+            name_to_find (str): Name to search for in camera names
+            
+        Returns:
+            int or None: Index of the camera if found, None otherwise
+        """
+        for i, name in enumerate(self.camera_names):
+            if name_to_find.lower() in name.lower():
+                print(f"[INFO] Found camera '{name}' for '{name_to_find}' at index {i}")
+                return i
+        print(f"[WARNING] No camera found containing '{name_to_find}'")
+        return None
     
