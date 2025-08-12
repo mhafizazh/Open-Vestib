@@ -1,4 +1,6 @@
 /src/__pycache__
 *.mp4
 result_videos/hafiz/hafiz.csv
-/result_videos/
+/result_videos
+/build
+/dist

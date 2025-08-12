@@ -13,12 +13,21 @@ import os
 import pandas as pd
 import json
 from datetime import datetime
+from prediction import estimate_bppv_likelihood
 
+
+def ellipse_size(e):
+    if e is None:
+        return np.nan
+    # e = ((cx, cy), (MA, ma), angle)  — MA, ma are diameters in pixels
+    (_, _), (MA, ma), _ = e
+    return round((float(MA) + float(ma)) / 2.0, 2)
 
 
 class TestSessionDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, base_path, parent=None):
         super().__init__(parent)
+        self.base_path = base_path
         self.setWindowTitle("Test Session Information")
         self.setModal(True)
         self.resize(400, 300)
@@ -109,8 +118,9 @@ class TestSessionDialog(QDialog):
 
 
 class EyeTrackerApp(QtWidgets.QMainWindow):
-    def __init__(self):
+    def __init__(self, base_path):
         super().__init__()
+        self.base_path = base_path  # Add base_path to the main app
         self.session_folder = None
         
         # Session information
@@ -139,8 +149,6 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         self.start_time = time.time()
         self.recording_enabled = False
         self.recording_filename = None
-        # self.left_cam_selector.currentIndexChanged.connect(self.init_selected_cameras)
-        # self.right_cam_selector.currentIndexChanged.connect(self.init_selected_cameras)
 
         # UI setup
         self.setWindowTitle("Eye Tracking System")
@@ -151,7 +159,7 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         self.video_label = QtWidgets.QLabel()
         self.layout.addWidget(self.video_label, 0, 0, 1, 2)
 
-        # --- Add camera selection dropdowns here ---
+        # --- Add camera selection dropdowns ---
         self.available_cameras = []
         self.camera_names = []
         graph = FilterGraph()
@@ -179,7 +187,6 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         if right_cam_index is not None:
             self.right_cam_selector.setCurrentIndex(right_cam_index)
         else:
-            # If no "Right Eye" camera found, select second camera if available
             self.right_cam_selector.setCurrentIndex(1 if len(self.available_cameras) > 1 else 0)
 
         self.layout.addWidget(QtWidgets.QLabel("Left Camera:"), 3, 0)
@@ -188,12 +195,12 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         self.layout.addWidget(self.right_cam_selector, 4, 1)
         self.left_cam_selector.currentIndexChanged.connect(self.init_selected_cameras)
         self.right_cam_selector.currentIndexChanged.connect(self.init_selected_cameras)
-        # --- End camera selection dropdowns ---
         self.init_selected_cameras()
+
         # Buttons
-        self.start_button = QtWidgets.QPushButton("start")
-        self.stop_button = QtWidgets.QPushButton("stop")
-        self.quit_button = QtWidgets.QPushButton("quit")
+        self.start_button = QtWidgets.QPushButton("Start")
+        self.stop_button = QtWidgets.QPushButton("Stop")
+        self.quit_button = QtWidgets.QPushButton("Quit")
 
         self.start_button.clicked.connect(self.start_recording)
         self.stop_button.clicked.connect(self.stop_recording)
@@ -204,13 +211,12 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         button_layout.addWidget(self.stop_button)
         button_layout.addWidget(self.quit_button) 
 
-        self.layout.addLayout(button_layout, 2, 0, 1, 2)  # row 2, spanning 2 columns
-
+        self.layout.addLayout(button_layout, 2, 0, 1, 2)
 
         # Create output directory
-        os.makedirs("../result_videos", exist_ok=True)
+        os.makedirs(os.path.join(self.base_path, "result_videos"), exist_ok=True)
 
-        # Initialize screen recording writer (you'll set this properly in update)
+        # Initialize screen recording writer
         self.video_writer = None
 
         # Plot manager
@@ -234,15 +240,11 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
             remaining = max(0, self.countdown_duration - elapsed)
             
             if remaining <= 0:
-                # Countdown finished, start actual recording
                 self.countdown_active = False
                 self.recording_enabled = True
                 print("Countdown finished! Recording started.")
             else:
-                # Still in countdown, don't process data yet
                 countdown_text = f"Recording starts in: {int(remaining) + 1}"
-                
-                # Combine frames first
                 lh, lw = left_frame.shape[:2]
                 rh, rw = right_frame.shape[:2]
                 
@@ -251,11 +253,8 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
                     right_frame = cv2.resize(right_frame, (new_rw, lh))
                 
                 combined_frame = np.hstack((left_frame, right_frame))
-                
-                # Draw countdown on combined frame
                 self.draw_countdown_on_combined_frame(combined_frame, countdown_text)
                 
-                # Convert to Qt image and display
                 rgb_image = cv2.cvtColor(combined_frame, cv2.COLOR_BGR2RGB)
                 h, w, ch = rgb_image.shape
                 bytes_per_line = ch * w
@@ -268,14 +267,16 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         lx1 = (lw - self.roi_width) // 2
         ly1 = (lh - self.roi_height) // 2
         left_roi = left_frame[ly1:ly1+self.roi_height, lx1:lx1+self.roi_width].copy()
-        left_x, left_y, _ = detect_pupil(left_roi, lw, lh)
+        left_x, left_y, left_ellipse, _ = detect_pupil(left_roi, lw, lh)
+        left_size  = ellipse_size(left_ellipse) 
 
         # Process right eye
         rh, rw = right_frame.shape[:2]
         rx1 = (rw - self.roi_width) // 2
         ry1 = (rh - self.roi_height) // 2
         right_roi = right_frame[ry1:ry1+self.roi_height, rx1:rx1+self.roi_width].copy()
-        right_x, right_y, _ = detect_pupil(right_roi, rw, rh)
+        right_x, right_y, right_ellipse, _ = detect_pupil(right_roi, rw, rh)
+        right_size  = ellipse_size(right_ellipse) 
 
         # Time
         current_time = time.time() - self.start_time
@@ -286,12 +287,9 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         if right_x is not None and right_y is not None:
             self.last_right_x = right_x
             self.last_right_y = right_y
-
-        
         
         if self.last_left_x is not None and self.last_left_y is not None:
             self.time_data.append(current_time)
-            # Only append if values are numbers
             if isinstance(self.last_left_x, (int, float)) and isinstance(self.last_left_y, (int, float)):
                 self.left_x_data.append(self.last_left_x)
                 self.left_y_data.append(self.last_left_y)
@@ -300,28 +298,66 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
                 if isinstance(self.last_right_x, (int, float)) and isinstance(self.last_right_y, (int, float)):
                     self.right_x_data.append(self.last_right_x)
                     self.right_y_data.append(self.last_right_y)
-            
-            # Add data to CSV handler if recording is enabled
+            # Add data to CSV
             if self.recording_enabled and not self.countdown_active:
+                # --- (1) compute pixel-speed (magnitude) in px/sec for each eye ---
+                # need at least 2 samples to compute velocity
+                if len(self.time_data) >= 2:
+                    dt = self.time_data[-1] - self.time_data[-2]
+                else:
+                    dt = 0
+
+                # Left eye speed
+                if dt > 0 and len(self.left_x_data) >= 2 and len(self.left_y_data) >= 2:
+                    ldx = (self.left_x_data[-1] - self.left_x_data[-2])
+                    ldy = (self.left_y_data[-1] - self.left_y_data[-2])
+                    lxv = (ldx**2 + ldy**2) ** 0.5 / dt
+                else:
+                    lxv = 0
+
+                # Right eye speed
+                if dt > 0 and len(self.right_x_data) >= 2 and len(self.right_y_data) >= 2:
+                    rdx = (self.right_x_data[-1] - self.right_x_data[-2])
+                    rdy = (self.right_y_data[-1] - self.right_y_data[-2])
+                    rxv = (rdx**2 + rdy**2) ** 0.5 / dt
+                else:
+                    rxv = 0
+
+                # --- (2) make ellipse serializable (OpenCV ellipse is a tuple of tuples) ---
+                # def ellipse_to_str(e):
+                #     if e is None:
+                #         return ""
+                #     # e = ((cx, cy), (axis1, axis2), angle)
+                #     return f"{e[0][0]:.2f},{e[0][1]:.2f}|{e[1][0]:.2f},{e[1][1]:.2f}|{e[2]:.2f}"
+
+                # left_ellipse_str  = ellipse_to_str(left_ellipse)
+                # right_ellipse_str = ellipse_to_str(right_ellipse)
+
+                # --- (3) write EVERYTHING to CSV ---
                 frame_recorded = self.csv_handler.add_data_point(
                     left_x=self.last_left_x if isinstance(self.last_left_x, (int, float)) else 0,
                     left_y=self.last_left_y if isinstance(self.last_left_y, (int, float)) else 0,
                     right_x=self.last_right_x if isinstance(self.last_right_x, (int, float)) else 0,
-                    right_y=self.last_right_y if isinstance(self.last_right_y, (int, float)) else 0
+                    right_y=self.last_right_y if isinstance(self.last_right_y, (int, float)) else 0,
+                    left_velocity=lxv,
+                    right_velocity=rxv,
+                    left_size=left_size,          # <<< ADDED
+                    right_size=right_size         # <<< ADDED
                 )
-                
-                # Optional: Print frame recording status for debugging
-                # if frame_recorded:
-                #     print(f"Frame {self.csv_handler.get_current_frame_number()} recorded at {time.time() - self.start_time:.3f}s")
+
+
+
+
         
-            self.plot_manager.update(
-                t=current_time,
-                lx=self.last_left_x if isinstance(self.last_left_x, (int, float)) else 0,
-                ly=self.last_left_y if isinstance(self.last_left_y, (int, float)) else 0,
-                rx=self.last_right_x if isinstance(self.last_right_x, (int, float)) else 0,
-                ry=self.last_right_y if isinstance(self.last_right_y, (int, float)) else 0,
-            )
-        
+        self.plot_manager.update(
+            t=current_time,
+            lx=self.last_left_x if isinstance(self.last_left_x, (int, float)) else 0,
+            ly=self.last_left_y if isinstance(self.last_left_y, (int, float)) else 0,
+            rx=self.last_right_x if isinstance(self.last_right_x, (int, float)) else 0,
+            ry=self.last_right_y if isinstance(self.last_right_y, (int, float)) else 0,
+            left_ellipse=left_ellipse,
+            right_ellipse=right_ellipse
+        )
 
         # Draw detection markers
         if left_x is not None and left_y is not None:
@@ -332,28 +368,44 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
             cv2.line(right_frame, (right_x - 10, right_y), (right_x + 10, right_y), (0, 255, 255), 1)
             cv2.line(right_frame, (right_x, right_y - 10), (right_x, right_y + 10), (0, 255, 255), 1)
 
+                # Draw detection markers
+        if left_ellipse is not None:
+            # The ellipse object is ((center_x, center_y), (minor_axis, major_axis), angle)
+            # We need to adjust the center coordinates back to the full frame
+            ellipse_center_x = int(left_ellipse[0][0] + lx1)
+            ellipse_center_y = int(left_ellipse[0][1] + ly1)
+            
+            # Use the average of the axes for the circle's radius
+            radius = int((left_ellipse[1][0] + left_ellipse[1][1]) / 4)
+            
+            # Draw the circle on the left frame
+            cv2.circle(left_frame, (ellipse_center_x, ellipse_center_y), radius, (0, 255, 0), 2)
+
+        if right_ellipse is not None:
+            # Adjust the center coordinates for the right eye
+            ellipse_center_x = int(right_ellipse[0][0] + rx1)
+            ellipse_center_y = int(right_ellipse[0][1] + ry1)
+            
+            # Calculate the radius
+            radius = int((right_ellipse[1][0] + right_ellipse[1][1]) / 4)
+            
+            # Draw the circle on the right frame
+            cv2.circle(right_frame, (ellipse_center_x, ellipse_center_y), radius, (0, 255, 0), 2)
 
         # Combine and display
-        # Ensure left_frame and right_frame have the same height before stacking
         lh, lw = left_frame.shape[:2]
         rh, rw = right_frame.shape[:2]
         
         if lh != rh:
-            # Resize right_frame to match left_frame's height
             new_rw = int(rw * lh / rh)
             right_frame = cv2.resize(right_frame, (new_rw, lh))
-            # Optionally, resize left_frame to match right_frame's height instead:
-            # new_lw = int(lw * rh / lh)
-            # left_frame = cv2.resize(left_frame, (new_lw, rh))
         
-        # Now you can safely stack
         combined_frame = np.hstack((left_frame, right_frame))
-        plot_frame = self.get_plot_frame()  # <-- FIXED LINE
+        plot_frame = self.get_plot_frame()
         
         if plot_frame.shape[1] != combined_frame.shape[1]:
             plot_frame = cv2.resize(plot_frame, (combined_frame.shape[1], plot_frame.shape[0]))
         
-        # Stack video and plot vertically
         final_frame = np.vstack((combined_frame, plot_frame))
 
         if self.recording_enabled and self.video_writer is None and self.recording_filename:
@@ -374,12 +426,9 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
                 self.recording_enabled = False
                 return
 
-        # ✅ Write frame to video
         if self.recording_enabled and self.video_writer:
             self.video_writer.write(final_frame)
 
-
-        # Convert to Qt image and display
         rgb_image = cv2.cvtColor(combined_frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
@@ -387,79 +436,56 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         self.video_label.setPixmap(QtGui.QPixmap.fromImage(qt_image))
 
     def draw_countdown_on_combined_frame(self, combined_frame, text):
-        """Draw countdown text on the combined frame in the top right corner."""
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.8 # Smaller font scale
+        font_scale = 0.8
         thickness = 2
-        color = (0, 255, 0) # Green color
-        
-        # Get text size
+        color = (0, 255, 0)
         (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
-        
-        # Calculate position to place text in the top right corner
         lh, lw = combined_frame.shape[:2]
-        text_x = lw - text_width - 10 # 10 pixels from the right edge
-        text_y = text_height + 10 # 10 pixels from the top edge
-        
-        # Draw text on the combined frame
+        text_x = lw - text_width - 10
+        text_y = text_height + 10
         cv2.putText(combined_frame, text, (text_x, text_y), font, font_scale, color, thickness)
 
     def closeEvent(self, event):
         self.left_cam.release()
         self.right_cam.release()
-
         if self.video_writer:
             self.video_writer.release()
-            
-        # Stop CSV recording if active
         if self.csv_handler.get_recording_status():
             self.csv_handler.stop_recording()
-
         event.accept()
-    
 
-    
     def start_recording(self):
-        # Show the test session dialog
-        dialog = TestSessionDialog(self)
+        dialog = TestSessionDialog(self.base_path, self)  # Pass base_path and parent
         if dialog.exec_() != QDialog.Accepted:
             print("Recording canceled by user.")
             return
 
-        # Get session information
         self.session_info = dialog.get_session_info()
         patient_folder_name = dialog.get_patient_folder_name()
         test_folder_name = dialog.get_folder_name()
         
-        # Validate required fields
         if not self.session_info['patient_first_name'] or not self.session_info['patient_last_name']:
             QtWidgets.QMessageBox.warning(self, "Missing Information", "Please enter both first and last name.")
             return
             
-        # Create folder structure
-        base_folder = "../result_videos"
+        base_folder = os.path.join(self.base_path, "result_videos")
         self.patient_folder = os.path.join(base_folder, patient_folder_name)
         self.test_folder = os.path.join(self.patient_folder, test_folder_name)
         
-        # Create directories
         os.makedirs(self.patient_folder, exist_ok=True)
         os.makedirs(self.test_folder, exist_ok=True)
         
-        # Set file paths
         self.session_folder = self.test_folder
         self.recording_filename = os.path.join(self.test_folder, f"{test_folder_name}.mp4")
         self.json_filename = os.path.join(self.test_folder, f"{test_folder_name}.json")
         
-        # Start CSV recording
         self.csv_handler.start_recording(test_folder_name, base_folder=self.test_folder)
-        
-        # Save JSON metadata
         self.save_session_metadata()
         
-        # Start countdown instead of recording immediately
         self.countdown_active = True
         self.countdown_start_time = time.time()
-        self.recording_enabled = False  # Will be set to True when countdown finishes
+        self.recording_enabled = False
         
         print(f"Session started for {patient_folder_name}")
         print(f"Test: {self.session_info['test_type']} - Trial {self.session_info['trial_number']}")
@@ -467,7 +493,6 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         print(f"Countdown started. Recording will begin in {self.countdown_duration} seconds...")
         
     def save_session_metadata(self):
-        """Save session metadata to JSON file"""
         if not self.session_info or not self.json_filename:
             return
             
@@ -500,7 +525,6 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
             print(f"[ERROR] Failed to save metadata: {e}")
 
     def get_plot_frame(self):
-        """Capture the pyqtgraph plot as a NumPy BGR image, handling row padding."""
         pixmap = self.plot_manager.plot_widget.grab()
         qimage = pixmap.toImage().convertToFormat(QtGui.QImage.Format_RGB888)
         width = qimage.width()
@@ -509,7 +533,6 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         ptr = qimage.bits()
         ptr.setsize(qimage.byteCount())
         arr = np.array(ptr, dtype=np.uint8).reshape((height, bytes_per_line))
-        # Only take the actual image width (width * 3 for RGB)
         arr = arr[:, :width * 3]
         arr = arr.reshape((height, width, 3))
         img = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
@@ -517,15 +540,13 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
 
     def stop_recording(self):
         self.recording_enabled = False
-        self.countdown_active = False  # Stop countdown if active
+        self.countdown_active = False
         if self.video_writer:
             self.video_writer.release()
             self.video_writer = None
 
-        # Stop CSV recording and save data
         self.csv_handler.stop_recording()
         
-        # Save final metadata with recording results
         if self.session_info:
             self.save_final_metadata()
 
@@ -537,18 +558,15 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         print("Recording stopped")
         
     def save_final_metadata(self):
-        """Save final metadata with recording results"""
         if not self.session_info or not self.json_filename:
             return
             
-        # Load existing metadata
         try:
             with open(self.json_filename, 'r') as f:
                 metadata = json.load(f)
         except:
             metadata = {}
             
-        # Add recording results
         metadata['recording_results'] = {
             'total_frames_recorded': self.csv_handler.get_current_frame_number(),
             'recording_duration': self.csv_handler.time_data[-1] if self.csv_handler.time_data else 0,
@@ -564,7 +582,6 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         except Exception as e:
             print(f"[ERROR] Failed to update final metadata: {e}")
 
-
     def init_selected_cameras(self):
         left_index = self.left_cam_selector.currentData()
         right_index = self.right_cam_selector.currentData()
@@ -575,14 +592,12 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
                 "Camera Selection Error",
                 "Left and Right cameras must be different!"
             )
-            # Revert right selector to a different camera
             if self.right_cam_selector.currentIndex() == 0 and self.right_cam_selector.count() > 1:
                 self.right_cam_selector.setCurrentIndex(1)
             else:
                 self.right_cam_selector.setCurrentIndex(0)
             return
     
-        # Release current cameras if they exist
         if hasattr(self, 'left_cam') and self.left_cam is not None:
             self.left_cam.release()
         if hasattr(self, 'right_cam') and self.right_cam is not None:
@@ -592,15 +607,6 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         self.right_cam = cv2.VideoCapture(right_index)
 
     def find_camera_by_name(self, name_to_find):
-        """
-        Find the index of a camera by its name (case-insensitive partial match)
-        
-        Args:
-            name_to_find (str): Name to search for in camera names
-            
-        Returns:
-            int or None: Index of the camera if found, None otherwise
-        """
         for i, name in enumerate(self.camera_names):
             if name_to_find.lower() in name.lower():
                 print(f"[INFO] Found camera '{name}' for '{name_to_find}' at index {i}")

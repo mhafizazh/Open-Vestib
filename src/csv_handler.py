@@ -27,6 +27,12 @@ class CSVDataHandler:
         self.left_y_data = deque(maxlen=max_data_points)
         self.right_x_data = deque(maxlen=max_data_points)
         self.right_y_data = deque(maxlen=max_data_points)
+        self.left_ellipse_data = deque(maxlen=max_data_points)
+        self.right_ellipse_data = deque(maxlen=max_data_points)
+        self.left_velocity_data = deque(maxlen=max_data_points)
+        self.right_velocity_data = deque(maxlen=max_data_points)
+        self.left_size_data  = deque(maxlen=max_data_points)
+        self.right_size_data = deque(maxlen=max_data_points)
         
         # Recording state
         self.is_recording = False
@@ -86,35 +92,41 @@ class CSVDataHandler:
         
         return time_since_last_frame >= self.frame_interval
         
-    def add_data_point(self, left_x, left_y, right_x, right_y):
-        """
-        Add a new data point with frame number if it's time for the next frame
-        
-        Args:
-            left_x (float): Left eye X position
-            left_y (float): Left eye Y position  
-            right_x (float): Right eye X position
-            right_y (float): Right eye Y position
-        """
+    def add_data_point(self, left_x, left_y, right_x, right_y,
+                    left_velocity=0.0, right_velocity=0.0,
+                    left_size=np.nan, right_size=np.nan):
+
+        # --- lazy init in case code runs with an old instance ---
+        if not hasattr(self, "left_size_data"):
+            self.left_size_data  = deque(maxlen=self.max_data_points)
+            self.right_size_data = deque(maxlen=self.max_data_points)
+        if not hasattr(self, "left_velocity_data"):
+            self.left_velocity_data  = deque(maxlen=self.max_data_points)
+            self.right_velocity_data = deque(maxlen=self.max_data_points)
+
         if not self.should_record_frame():
             return False
-            
+
         current_time = time.time()
         elapsed_time = current_time - self.start_time
-        
-        # Increment frame number
         self.frame_number += 1
         self.last_frame_time = current_time
-        
-        # Store data
+
         self.frame_data.append(self.frame_number)
         self.time_data.append(elapsed_time)
-        self.left_x_data.append(left_x)
-        self.left_y_data.append(left_y)
-        self.right_x_data.append(right_x)
-        self.right_y_data.append(right_y)
-        
+        self.left_x_data.append(left_x);  self.left_y_data.append(left_y)
+        self.right_x_data.append(right_x); self.right_y_data.append(right_y)
+
+        self.left_velocity_data.append(float(left_velocity) if left_velocity is not None else 0.0)
+        self.right_velocity_data.append(float(right_velocity) if right_velocity is not None else 0.0)
+
+        # append ONCE (you had these twice before)
+        self.left_size_data.append(left_size if left_size is not None else np.nan)
+        self.right_size_data.append(right_size if right_size is not None else np.nan)
+
         return True
+
+
         
     def save_to_csv(self):
         """Save current data to CSV file"""
@@ -128,13 +140,19 @@ class CSVDataHandler:
             
         # Create DataFrame with frame numbers
         df = pd.DataFrame({
-            'Frame#': list(self.frame_data),
+            'Frame#':  list(self.frame_data),
             'Time(s)': list(self.time_data),
-            'Left_X': list(self.left_x_data),
-            'Left_Y': list(self.left_y_data),
+            'Left_X':  list(self.left_x_data),
+            'Left_Y':  list(self.left_y_data),
             'Right_X': list(self.right_x_data),
             'Right_Y': list(self.right_y_data),
+            'left_velocity':  list(getattr(self, 'left_velocity_data', [])),
+            'right_velocity': list(getattr(self, 'right_velocity_data', [])),
+            'Left_Size':  list(getattr(self, 'left_size_data', [])),
+            'Right_Size': list(getattr(self, 'right_size_data', [])),
         })
+
+
         
         # Save to CSV
         df.to_csv(self.csv_filename, index=False)
@@ -182,12 +200,15 @@ class CSVDataHandler:
         }
         
     def clear_data(self):
-        """Clear all stored data"""
         self.frame_data.clear()
         self.time_data.clear()
         self.left_x_data.clear()
         self.left_y_data.clear()
         self.right_x_data.clear()
         self.right_y_data.clear()
-        self.frame_number = 0
-        print("[INFO] All data cleared") 
+        self.left_ellipse_data.clear()
+        self.right_ellipse_data.clear()
+        self.left_velocity_data.clear()
+        self.right_velocity_data.clear()
+        self.left_size_data.clear()
+        self.right_size_data.clear()
