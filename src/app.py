@@ -226,6 +226,14 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.update)
         self.timer.start(30)
+        
+        # Frame rate control
+        self.last_frame_time = time.time()
+        self.target_fps = 30.0
+        self.frame_interval = 1.0 / self.target_fps
+        
+        # Alternative: Use a more conservative frame rate for video recording
+        self.video_fps = 20.0  # Lower frame rate to account for processing overhead
 
     def update(self):
         left_frame, right_frame = get_frames(self.left_cam, self.right_cam)
@@ -410,16 +418,19 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
 
         if self.recording_enabled and self.video_writer is None and self.recording_filename:
             height, width = final_frame.shape[:2]
+            # Use conservative frame rate to account for processing overhead
+            recording_fps = self.video_fps
+            
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            self.video_writer = cv2.VideoWriter(self.recording_filename, fourcc, 30, (width, height))
+            self.video_writer = cv2.VideoWriter(self.recording_filename, fourcc, recording_fps, (width, height))
             if not self.video_writer.isOpened():
                 print("Trying XVID codec...")
                 fourcc = cv2.VideoWriter_fourcc(*'XVID')
-                self.video_writer = cv2.VideoWriter(self.recording_filename, fourcc, 30, (width, height))
+                self.video_writer = cv2.VideoWriter(self.recording_filename, fourcc, recording_fps, (width, height))
             if not self.video_writer.isOpened():
                 print("Trying MJPG codec...")
                 fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-                self.video_writer = cv2.VideoWriter(self.recording_filename, fourcc, 30, (width, height))
+                self.video_writer = cv2.VideoWriter(self.recording_filename, fourcc, recording_fps, (width, height))
             if not self.video_writer.isOpened():
                 print("VideoWriter failed to open")
                 self.video_writer = None
@@ -434,6 +445,9 @@ class EyeTrackerApp(QtWidgets.QMainWindow):
         bytes_per_line = ch * w
         qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
         self.video_label.setPixmap(QtGui.QPixmap.fromImage(qt_image))
+        
+        # Update frame timing for next iteration
+        self.last_frame_time = time.time()
 
     def draw_countdown_on_combined_frame(self, combined_frame, text):
         font = cv2.FONT_HERSHEY_SIMPLEX
